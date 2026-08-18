@@ -439,7 +439,7 @@ export const botConfig = {
     errorOccurred: "An error occurred while executing this command.",
     missingPermissions:
       "I am missing required permissions to perform this action.",
-    commandDisabled: "This command has been disabled.",
+    commandDisabled: "Not available at this time.",
     maintenanceMode: "The bot is currently in maintenance mode.",
   },
 
