@@ -26,7 +26,7 @@ async function processRoleAssignment(context, targetMember, role, executorMember
 
 export default {
     data: new SlashCommandBuilder()
-        .setName('giverole')
+        .setName('addrole')
         .setDescription('Assign a server role to a member')
         .addUserOption(option => option.setName('target').setDescription('The member to receive the role').setRequired(true))
         .addRoleOption(option => option.setName('role').setDescription('The role to give').setRequired(true))
