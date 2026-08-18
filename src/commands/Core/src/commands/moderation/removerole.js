@@ -5,10 +5,10 @@ import { InteractionHelper } from '../../utils/interactionHelper.js';
 
 async function processRoleRemoval(context, targetMember, role, executorMember, botMember) {
     if (!targetMember) {
-        return { title: 'Error', description: 'That user is not in this server.', color: 'error' };
+        return { title: 'Error', description: 'That user is not in this server. Make sure to tag them or use their ID.', color: 'error' };
     }
     if (!role) {
-        return { title: 'Error', description: 'Please provide a valid server role.', color: 'error' };
+        return { title: 'Error', description: 'Please provide a valid server role. Make sure to tag the role or use its ID.', color: 'error' };
     }
     if (role.position >= botMember.roles.highest.position) {
         return { title: 'Permission Denied', description: `I cannot remove **${role.name}** because it is positioned higher than my highest role. Move my bot role above it in Server Settings.`, color: 'error' };
@@ -32,51 +32,50 @@ export default {
         .addRoleOption(option => option.setName('role').setDescription('The role to remove').setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
-    async execute(interaction) {
+    async execute(context, args = []) {
         try {
-            await InteractionHelper.safeDefer(interaction);
-            const targetMember = interaction.options.getMember('target');
-            const role = interaction.options.getRole('role');
-            
-            const resultData = await processRoleRemoval(
-                interaction, 
-                targetMember, 
-                role, 
-                interaction.member, 
-                interaction.guild.members.me
-            );
+            const isInteraction = typeof context.getMember !== 'function' && context.options !== undefined;
 
-            return await InteractionHelper.safeEditReply(interaction, { embeds: [createEmbed(resultData)] });
-        } catch (error) {
-            logger.error('Slash removerole command error:', error);
-            return await InteractionHelper.safeEditReply(interaction, {
-                embeds: [createEmbed({ title: 'System Error', description: 'Failed to remove role.', color: 'error' })]
-            });
-        }
-    },
+            if (isInteraction) {
+                await InteractionHelper.safeDefer(context);
+                const targetMember = context.options.getMember('target');
+                const role = context.options.getRole('role');
+                
+                const resultData = await processRoleRemoval(context, targetMember, role, context.member, context.guild.members.me);
+                return await InteractionHelper.safeEditReply(context, { embeds: [createEmbed(resultData)] });
+            } else {
+                if (!context.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
+                    return context.reply({ embeds: [createEmbed({ title: 'Permission Denied', description: 'You need the `Manage Roles` permission to use this command.', color: 'error' })] });
+                }
 
-    async executeMessage(message, args) {
-        try {
-            if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
-                return message.reply({ embeds: [createEmbed({ title: 'Permission Denied', description: 'You need the `Manage Roles` permission to use this command.', color: 'error' })] });
+                let targetMember = context.mentions.members.first();
+                let role = context.mentions.roles.first();
+
+                if (!targetMember || !role) {
+                    const cleanArgs = args.filter(arg => !['from', 'off', 'remove'].includes(arg.toLowerCase()));
+                    for (const arg of cleanArgs) {
+                        const cleanId = arg.replace(/[<@&>]/g, '');
+                        if (!targetMember) {
+                            const foundMember = context.guild.members.cache.get(cleanId);
+                            if (foundMember) targetMember = foundMember;
+                        }
+                        if (!role) {
+                            const foundRole = context.guild.roles.cache.get(cleanId);
+                            if (foundRole) role = foundRole;
+                        }
+                    }
+                }
+
+                const resultData = await processRoleRemoval(context, targetMember, role, context.member, context.guild.members.me);
+                return context.reply({ embeds: [createEmbed(resultData)] });
             }
-
-            const targetMember = message.mentions.members.first() || message.guild.members.cache.get(args[0]);
-            const role = message.mentions.roles.first() || message.guild.roles.cache.get(args[1]);
-
-            const resultData = await processRoleRemoval(
-                message, 
-                targetMember, 
-                role, 
-                message.member, 
-                message.guild.members.me
-            );
-
-            return message.reply({ embeds: [createEmbed(resultData)] });
         } catch (error) {
-            logger.error('Prefix removerole command error:', error);
-            return message.reply({ embeds: [createEmbed({ title: 'System Error', description: 'Failed to remove role.', color: 'error' })] });
+            logger.error('Removerole execution failure:', error);
+            if (context.reply) {
+                return context.reply({ embeds: [createEmbed({ title: 'System Error', description: 'Failed to complete execution run.', color: 'error' })] });
+            }
         }
     }
 };
+
 
