@@ -5,10 +5,10 @@ import { InteractionHelper } from '../../utils/interactionHelper.js';
 
 async function processRoleAssignment(context, targetMember, role, executorMember, botMember) {
     if (!targetMember) {
-        return { title: 'Error', description: 'That user is not in this server.', color: 'error' };
+        return { title: 'Error', description: 'That user is not in this server. Make sure to tag them or use their ID.', color: 'error' };
     }
     if (!role) {
-        return { title: 'Error', description: 'Please provide a valid server role.', color: 'error' };
+        return { title: 'Error', description: 'Please provide a valid server role. Make sure to tag the role or use its ID.', color: 'error' };
     }
     if (role.position >= botMember.roles.highest.position) {
         return { title: 'Permission Denied', description: `I cannot assign **${role.name}** because it is positioned higher than my highest role. Move my bot role above it in Server Settings.`, color: 'error' };
@@ -32,50 +32,54 @@ export default {
         .addRoleOption(option => option.setName('role').setDescription('The role to give').setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
-    async execute(interaction) {
+    // UNIFIED ENTRY POINT: Captures both Slash interactions AND legacy text message contexts safely
+    async execute(context, args = []) {
         try {
-            await InteractionHelper.safeDefer(interaction);
-            const targetMember = interaction.options.getMember('target');
-            const role = interaction.options.getRole('role');
-            
-            const resultData = await processRoleAssignment(
-                interaction, 
-                targetMember, 
-                role, 
-                interaction.member, 
-                interaction.guild.members.me
-            );
+            // Context Check: Is this a Slash Command or a standard Text Message?
+            const isInteraction = typeof context.getMember !== 'function' && context.options !== undefined;
 
-            return await InteractionHelper.safeEditReply(interaction, { embeds: [createEmbed(resultData)] });
-        } catch (error) {
-            logger.error('Slash giverole command error:', error);
-            return await InteractionHelper.safeEditReply(interaction, {
-                embeds: [createEmbed({ title: 'System Error', description: 'Failed to assign role.', color: 'error' })]
-            });
-        }
-    },
+            if (isInteraction) {
+                // Handle Slash Interaction
+                await InteractionHelper.safeDefer(context);
+                const targetMember = context.options.getMember('target');
+                const role = context.options.getRole('role');
+                
+                const resultData = await processRoleAssignment(context, targetMember, role, context.member, context.guild.members.me);
+                return await InteractionHelper.safeEditReply(context, { embeds: [createEmbed(resultData)] });
+            } else {
+                // Handle Regular Text Message (Force manual fallback permission check)
+                if (!context.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
+                    return context.reply({ embeds: [createEmbed({ title: 'Permission Denied', description: 'You need the `Manage Roles` permission to use this command.', color: 'error' })] });
+                }
 
-    async executeMessage(message, args) {
-        try {
-            if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
-                return message.reply({ embeds: [createEmbed({ title: 'Permission Denied', description: 'You need the `Manage Roles` permission to use this command.', color: 'error' })] });
+                // Smart Multi-Order mentions scanner
+                let targetMember = context.mentions.members.first();
+                let role = context.mentions.roles.first();
+
+                // ID Parsing fallback block for mixed parameters
+                if (!targetMember || !role) {
+                    const cleanArgs = args.filter(arg => !['to', 'for', 'add'].includes(arg.toLowerCase()));
+                    for (const arg of cleanArgs) {
+                        const cleanId = arg.replace(/[<@&>]/g, '');
+                        if (!targetMember) {
+                            const foundMember = context.guild.members.cache.get(cleanId);
+                            if (foundMember) targetMember = foundMember;
+                        }
+                        if (!role) {
+                            const foundRole = context.guild.roles.cache.get(cleanId);
+                            if (foundRole) role = foundRole;
+                        }
+                    }
+                }
+
+                const resultData = await processRoleAssignment(context, targetMember, role, context.member, context.guild.members.me);
+                return context.reply({ embeds: [createEmbed(resultData)] });
             }
-
-            const targetMember = message.mentions.members.first() || message.guild.members.cache.get(args[0]);
-            const role = message.mentions.roles.first() || message.guild.roles.cache.get(args[1]);
-
-            const resultData = await processRoleAssignment(
-                message, 
-                targetMember, 
-                role, 
-                message.member, 
-                message.guild.members.me
-            );
-
-            return message.reply({ embeds: [createEmbed(resultData)] });
         } catch (error) {
-            logger.error('Prefix giverole command error:', error);
-            return message.reply({ embeds: [createEmbed({ title: 'System Error', description: 'Failed to assign role.', color: 'error' })] });
+            logger.error('Giverole execution failure:', error);
+            if (context.reply) {
+                return context.reply({ embeds: [createEmbed({ title: 'System Error', description: 'Failed to complete execution run.', color: 'error' })] });
+            }
         }
     }
 };
