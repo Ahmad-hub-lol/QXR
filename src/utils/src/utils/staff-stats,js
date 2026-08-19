@@ -1,0 +1,67 @@
+// src/commands/utility/staff-stats.js
+
+import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+
+export default {
+    data: new SlashCommandBuilder()
+        .setName('staff-stats')
+        .setDescription('Show all ticket reviews and performance histories for a staff member')
+        .addUserOption(option => 
+            option.setName('staff')
+                .setDescription('The staff member to audit')
+                .setRequired(true)),
+
+    async execute(interaction) {
+        const staffMember = interaction.options.getUser('staff');
+
+        try {
+            // Extracts all recorded life-cycle rows matching this explicit staff ID
+            const records = await interaction.client.db.query(
+                'SELECT * FROM ticket_reviews WHERE guild_id = $1 AND claimed_by = $2 ORDER BY created_at DESC',
+                [interaction.guildId, staffMember.id]
+            );
+
+            if (records.rows.length === 0) {
+                return await interaction.reply({
+                    content: `❌ No ticket tracking records found for ${staffMember.username}.`,
+                    ephemeral: true
+                });
+            }
+
+            let totalReviews = 0;
+            let totalScore = 0;
+            let totalSkipped = 0;
+            let logDescription = '';
+
+            records.rows.forEach((row, index) => {
+                const opener = row.opened_by ? `<@${row.opened_by}>` : '`Unknown`';
+                const closer = row.closed_by ? `<@${row.closed_by}>` : '`Unknown`';
+                const priorityDisplay = row.priority ? ` [${row.priority.toUpperCase()}]` : '';
+
+                if (row.skipped) {
+                    totalSkipped++;
+                    logDescription += `\n**#${index + 1} [${row.ticket_name}]**${priorityDisplay}\n🔹 *User Skipped Rating* | Opener: ${opener} | Closer: ${closer}\n`;
+                } else if (row.rating) {
+                    totalReviews++;
+                    totalScore += row.rating;
+                    const stars = '⭐'.repeat(row.rating);
+                    logDescription += `\n**#${index + 1} [${row.ticket_name}]**${priorityDisplay}\n${stars} (${row.rating}/5) - "${row.comment}"\n🔹 Opener: ${opener} | Closer: ${closer}\n`;
+                }
+            });
+
+            const averageRating = totalReviews > 0 ? (totalScore / totalReviews).toFixed(1) : 'N/A';
+
+            const summaryEmbed = new EmbedBuilder()
+                .setColor('#5865F2')
+                .setTitle(`📊 Ticket Audit: ${staffMember.username}`)
+                .setDescription(`### **Summary Metrics**\n📥 **Total Claimed:** ${records.rows.length}\n⭐ **Avg Rating:** ${averageRating} / 5 (${totalReviews} reviews)\n⏩ **Skipped Requests:** ${totalSkipped}\n\n### **Recent Ticket Logs**\n${logDescription.slice(0, 3700)}`)
+                .setTimestamp();
+
+            await interaction.reply({ embeds: [summaryEmbed] });
+
+        } catch (error) {
+            console.error('Error fetching staff performance analytics:', error);
+            await interaction.reply({ content: '❌ Failed to extract system statistics data logs.', ephemeral: true });
+        }
+    }
+};
