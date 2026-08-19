@@ -152,12 +152,11 @@ async function handleAllReviews(selectInteraction, rootInteraction, guildId, cli
                     .setTitle(`Ticket #${review.ticket_id}`)
                     .setColor(getColor('info'))
                     .addFields(
-                        { name: 'User', value: user ? `${user.username} (${user.id})` : 'Unknown User', inline: true },
+                        { name: 'Opened By', value: user ? `${user.username}` : 'Unknown User', inline: true },
                         { name: 'Rating', value: `${review.rating}/5 ⭐`, inline: true },
                         { name: 'Claimed By', value: claimedBy ? `${claimedBy.username}` : 'Unclaimed', inline: true },
                         { name: 'Closed By', value: closedBy ? `${closedBy.username}` : 'Unknown', inline: true },
                         { name: 'Comment', value: review.comment || 'No comment provided', inline: false },
-                        { name: 'Date', value: new Date(review.created_at).toLocaleString(), inline: true },
                     )
             );
         }
@@ -277,11 +276,10 @@ async function handleStaffReviews(selectInteraction, rootInteraction, guildId, c
                         .setTitle(`Ticket #${review.ticket_id}`)
                         .setColor(getColor('info'))
                         .addFields(
-                            { name: 'User', value: user ? `${user.username} (${user.id})` : 'Unknown User', inline: true },
+                            { name: 'Opened By', value: user ? `${user.username}` : 'Unknown User', inline: true },
                             { name: 'Rating', value: `${review.rating}/5 ⭐`, inline: true },
                             { name: 'Claimed By', value: claimedBy ? `${claimedBy.username}` : 'Unclaimed', inline: true },
                             { name: 'Comment', value: review.comment || 'No comment provided', inline: false },
-                            { name: 'Date', value: new Date(review.created_at).toLocaleString(), inline: true },
                         )
                 );
             }
@@ -351,11 +349,10 @@ async function handlePendingReviews(selectInteraction, rootInteraction, guildId,
                     .setTitle(`Ticket #${ticket.ticket_id}`)
                     .setColor(getColor('warning'))
                     .addFields(
-                        { name: 'User', value: user ? `${user.username} (${user.id})` : 'Unknown User', inline: true },
+                        { name: 'Opened By', value: user ? `${user.username}` : 'Unknown User', inline: true },
                         { name: 'Status', value: '⏳ Awaiting Review', inline: true },
                         { name: 'Claimed By', value: claimedBy ? `${claimedBy.username}` : 'Unclaimed', inline: true },
                         { name: 'Closed By', value: closedBy ? `${closedBy.username}` : 'Unknown', inline: true },
-                        { name: 'Closed At', value: new Date(ticket.closed_at).toLocaleString(), inline: false },
                     )
             );
         }
