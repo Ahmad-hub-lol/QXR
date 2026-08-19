@@ -323,7 +323,7 @@ async function handlePendingReviews(selectInteraction, rootInteraction, guildId,
         }
 
         const result = await client.db.db.pool.query(
-            `SELECT * FROM ${pgConfig.tables.tickets} WHERE guild_id = $1 AND status = 'closed' AND reviewed = false ORDER BY closed_at DESC LIMIT 50`,
+            `SELECT * FROM ${pgConfig.tables.tickets} WHERE guild_id = $1 AND closed_at IS NOT NULL AND reviewed = false ORDER BY closed_at DESC LIMIT 50`,
             [guildId]
         );
 
