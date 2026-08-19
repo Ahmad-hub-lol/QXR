@@ -1,6 +1,6 @@
-// ticketLogging.js
+// ticketLogging.js — PART 1 OF 2
 
-import { ChannelType } from 'discord.js';
+import { ChannelType, AttachmentBuilder } from 'discord.js';
 import { getGuildConfig } from '../../services/config/guildConfig.js';
 import { logger } from '../logger.js';
 import {
@@ -8,6 +8,81 @@ import {
   formatRatingStars,
   resolveUserAuthor,
 } from '../logging/logEmbeds.js';
+
+/**
+ * Generates a non-coder friendly plaintext transcript from channel messages
+ * @param {object} ticketData Metadata concerning ownership, claiming, and completion
+ * @param {Collection} messages Collection of Discord.js messages fetched from the room
+ * @returns {AttachmentBuilder} Prepared discord attachment file
+ */
+export function generateCleanTranscript(ticketData, messages) {
+  const { 
+    ticketNumber, 
+    creatorTag, 
+    creatorId, 
+    claimerTag, 
+    closerTag, 
+    rating, 
+    comment 
+  } = ticketData;
+
+  let content = `==================================================\n`;
+  content += `                TICKET TRANSCRIPT                 \n`;
+  content += `==================================================\n\n`;
+  
+  content += `[TICKET INFORMATION]\n`;
+  content += `• Ticket Identifier: #${ticketNumber || 'Unknown'}\n`;
+  content += `• Opened By:         ${creatorTag ? `${creatorTag} (${creatorId || 'N/A'})` : 'Unknown User'}\n`;
+  content += `• Handled/Claimed By: ${claimerTag || 'Not Claimed / Shared Queue'}\n`;
+  content += `• Closed By:         ${closerTag || 'System / Automated'}\n\n`;
+
+  content += `[USER REVIEW & FEEDBACK]\n`;
+  if (rating) {
+    const starTotal = Number(rating) || 0;
+    content += `• Rating Given:      ${'★'.repeat(starTotal)}${'☆'.repeat(Math.max(0, 5 - starTotal))} (${starTotal}/5)\n`;
+    content += `• Feedback Comment:  "${comment || 'No written response left.'}"\n\n`;
+  } else {
+    content += `• Rating Status:     No evaluation or review form was filled for this ticket.\n\n`;
+  }
+
+  content += `==================================================\n`;
+  content += `                 MESSAGE HISTORY                  \n`;
+  content += `==================================================\n\n`;
+
+  const sortedMessages = Array.from(messages.values()).reverse();
+
+  for (const msg of sortedMessages) {
+    if (msg.system && !msg.content) continue;
+
+    const timestamp = msg.createdAt.toLocaleString('en-US', {
+      dateStyle: 'short',
+      timeStyle: 'medium'
+    });
+
+    const authorDisplay = msg.author.bot ? `[BOT] ${msg.author.tag}` : msg.author.tag;
+    
+    content += `[${timestamp}] ${authorDisplay}:\n`;
+    
+    if (msg.content) {
+      content += `  ${msg.content}\n`;
+    }
+
+    if (msg.attachments && msg.attachments.size > 0) {
+      msg.attachments.forEach(file => {
+        content += `  [ATTACHED FILE OR MEDIA URL: ${file.url}]\n`;
+      });
+    }
+
+    content += `\n`; 
+  }
+
+  content += `==================================================\n`;
+  content += `                END OF TRANSCRIPT                 \n`;
+  content += `==================================================\n`;
+
+  const fileBuffer = Buffer.from(content, 'utf-8');
+  return new AttachmentBuilder(fileBuffer, { name: `transcript-ticket-${ticketNumber || 'log'}.txt` });
+}
 
 export async function logTicketEvent({ client, guildId, event }) {
   try {
@@ -36,12 +111,43 @@ export async function logTicketEvent({ client, guildId, event }) {
       return;
     }
 
-    const embed = await createTicketLogEmbed(guild, event);
+    let activeAttachments = event.attachments || [];
+    let updatedMetadata = { ...event.metadata };
 
+    if (event.type === 'transcript' && event.ticketId) {
+      const targetChannel = guild.channels.cache.get(event.ticketId) || await guild.channels.fetch(event.ticketId).catch(() => null);
+      
+      if (targetChannel && targetChannel.isTextBased()) {
+        const structuralMessages = await targetChannel.messages.fetch({ limit: 100 }).catch(() => null);
+        
+        if (structuralMessages && structuralMessages.size > 0) {
+          updatedMetadata.messageCount = structuralMessages.size;
+          
+          let creatorUser = event.userId ? await client.users.fetch(event.userId).catch(() => null) : null;
+          let executorUser = event.executorId ? await client.users.fetch(event.executorId).catch(() => null) : null;
+          let claimerUser = event.metadata?.claimerId ? await client.users.fetch(event.metadata.claimerId).catch(() => null) : null;
+
+          const contextData = {
+            ticketNumber: event.ticketNumber || targetChannel.name,
+            creatorTag: creatorUser?.tag,
+            creatorId: creatorUser?.id,
+            claimerTag: claimerUser?.tag,
+            closerTag: executorUser?.tag,
+            rating: event.metadata?.rating,
+            comment: event.metadata?.comment
+          };
+
+          const textFileAttachment = generateCleanTranscript(contextData, structuralMessages);
+          activeAttachments.push(textFileAttachment);
+        }
+      }
+    }
+
+    const embed = await createTicketLogEmbed(guild, { ...event, metadata: updatedMetadata });
     const messageOptions = { embeds: [embed] };
 
-    if (event.attachments && event.attachments.length > 0) {
-      messageOptions.files = event.attachments;
+    if (activeAttachments.length > 0) {
+      messageOptions.files = activeAttachments;
     }
 
     await channel.send(messageOptions);
@@ -75,6 +181,7 @@ export async function logTicketFeedback({
     },
   });
 }
+// ticketLogging.js — PART 2 OF 2
 
 function getLogChannelForEventType(config, eventType) {
   switch (eventType) {
@@ -172,14 +279,22 @@ async function createTicketLogEmbed(guild, event) {
       break;
 
     case 'priority': {
-      const priorityEmojis = { none: '⚪', low: '🔵', medium: '🟢', high: '🟡', urgent: '🔴' };
+      const priorityStyles = { 
+        low: { emoji: '🟢', color: 0x57F287 },    
+        medium: { emoji: '🟡', color: 0xFAA61A }, 
+        high: { emoji: '🟠', color: 0xE67E22 }, 
+        urgent: { emoji: '🚨', color: 0xED4245 }  
+      };
+      
+      const currentStyle = priorityStyles[event.priority] || { emoji: '⚪', color: 0x95a5a6 };
       const priorityLabel = event.priority
-        ? `${priorityEmojis[event.priority] || '⚪'} ${event.priority.charAt(0).toUpperCase()}${event.priority.slice(1)}`
+        ? `${currentStyle.emoji} ${event.priority.charAt(0).toUpperCase()}${event.priority.slice(1)}`
         : 'Unknown';
+        
       author = await resolveUserAuthor(guild.client, event.executorId);
       inlineFields = [
         { name: 'Ticket', value: ticketRef, inline: true },
-        { name: 'Priority', value: priorityLabel, inline: true },
+        { name: 'Priority Level', value: priorityLabel, inline: true },
         { name: 'Updated by', value: executorMention || 'Unknown', inline: true },
       ];
       break;
@@ -277,4 +392,3 @@ export function validateLogChannel(channel, botMember) {
 
   return { valid: true };
 }
-
