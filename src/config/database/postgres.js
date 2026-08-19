@@ -18,6 +18,7 @@ const configuredTables = {
     verification_audit: 'verification_audit',
     temp_data: 'temp_data',
     cache_data: 'cache_data',
+    ticketReviews: 'ticket_reviews',
 };
 
 const allowedTableIdentifiers = new Set([
@@ -37,6 +38,7 @@ const allowedTableIdentifiers = new Set([
     'verification_audit',
     'temp_data',
     'cache_data',
+    'ticket_reviews',
 ]);
 
 const validatedTables = Object.fromEntries(
