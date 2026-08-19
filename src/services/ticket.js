@@ -620,7 +620,7 @@ function escapeHtml(text) {
     .replace(/'/g, '&#039;');
 }
 
-async function generateTranscript(channel) {
+async function generateTranscript(channel, ticketData = null) {
   try {
     logger.debug('Generating transcript for channel', {
       channelId: channel.id,
@@ -646,11 +646,40 @@ async function generateTranscript(channel) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
 
-    const rows = messages.map((msg) => {
-      const ts = new Date(msg.createdTimestamp).toISOString().replace('T', ' ').slice(0, 19);
+    const resolveDisplayName = async (userId) => {
+      if (!userId) return null;
+      try {
+        const user = await channel.client.users.fetch(userId).catch(() => null);
+        return user ? (user.tag ?? user.username) : `User (${userId})`;
+      } catch {
+        return `User (${userId})`;
+      }
+    };
+
+    const [openedByName, closedByName, claimedByName] = await Promise.all([
+      resolveDisplayName(ticketData?.userId),
+      resolveDisplayName(ticketData?.closedBy),
+      resolveDisplayName(ticketData?.claimedBy)
+    ]);
+
+    const infoRows = [
+      ticketData?.id ? `<div class="info-row"><span class="info-label">Ticket</span><span class="info-value">#${escape(ticketData.id)}</span></div>` : '',
+      openedByName ? `<div class="info-row"><span class="info-label">Opened by</span><span class="info-value">${escape(openedByName)}</span></div>` : '',
+      claimedByName ? `<div class="info-row"><span class="info-label">Claimed by</span><span class="info-value">${escape(claimedByName)}</span></div>` : '',
+      closedByName ? `<div class="info-row"><span class="info-label">Closed by</span><span class="info-value">${escape(closedByName)}</span></div>` : ''
+    ].filter(Boolean).join('\n');
+
+    const bubbles = messages.map((msg) => {
       const author = escape(msg.author?.tag ?? msg.author?.username ?? 'Unknown');
       const content = escape(msg.content || (msg.embeds.length ? '[embed]' : '[attachment]'));
-      return `<tr><td class="ts">${ts}</td><td class="author">${author}</td><td class="msg">${content}</td></tr>`;
+      const initial = escape((msg.author?.username ?? msg.author?.tag ?? '?').charAt(0).toUpperCase());
+      return `<div class="message">
+  <div class="avatar">${initial}</div>
+  <div class="bubble">
+    <div class="author">${author}</div>
+    <div class="content">${content}</div>
+  </div>
+</div>`;
     }).join('\n');
 
     const html = `<!DOCTYPE html>
@@ -658,27 +687,100 @@ async function generateTranscript(channel) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Transcript – #${escape(channel.name)}</title>
+<title>Conversation – #${escape(channel.name)}</title>
 <style>
-body{font-family:sans-serif;background:#36393f;color:#dcddde;margin:0;padding:16px}
-h1{color:#fff;font-size:1.2rem;margin-bottom:8px}
-table{width:100%;border-collapse:collapse;font-size:0.85rem}
-th{background:#2f3136;color:#8e9297;padding:6px 8px;text-align:left;border-bottom:2px solid #202225}
-td{padding:4px 8px;border-bottom:1px solid #40444b;vertical-align:top}
-.ts{color:#72767d;white-space:nowrap;width:160px}
-.author{color:#7289da;white-space:nowrap;width:160px}
-.msg{word-break:break-word}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: #f0f2f5;
+  color: #1c1e21;
+  margin: 0;
+  padding: 24px;
+}
+.container {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.header {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+.header h1 {
+  margin: 0 0 12px 0;
+  font-size: 1.25rem;
+  color: #1c1e21;
+}
+.info-row {
+  display: flex;
+  padding: 4px 0;
+  font-size: 0.9rem;
+}
+.info-label {
+  width: 110px;
+  color: #65676b;
+}
+.info-value {
+  color: #1c1e21;
+  font-weight: 600;
+}
+.conversation {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px 24px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+.message {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #5865f2;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.bubble {
+  background: #f0f2f5;
+  border-radius: 14px;
+  padding: 10px 14px;
+  max-width: 100%;
+}
+.author {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #5865f2;
+  margin-bottom: 2px;
+}
+.content {
+  font-size: 0.95rem;
+  line-height: 1.4;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
 </style>
 </head>
 <body>
-<h1>📜 Transcript – #${escape(channel.name)}</h1>
-<p style="color:#72767d">${messages.length} message(s) exported on ${new Date().toUTCString()}</p>
-<table>
-<thead><tr><th>Timestamp (UTC)</th><th>Author</th><th>Message</th></tr></thead>
-<tbody>
-${rows}
-</tbody>
-</table>
+<div class="container">
+  <div class="header">
+    <h1>Ticket Conversation</h1>
+    ${infoRows}
+  </div>
+  <div class="conversation">
+    ${bubbles}
+  </div>
+</div>
 </body>
 </html>`;
 
@@ -742,7 +844,7 @@ export async function deleteTicket(channel, deleter) {
 
         let attachment = null;
         try {
-          attachment = await generateTranscript(channel);
+          attachment = await generateTranscript(channel, ticketData);
           if (attachment) {
             logger.info('Transcript generated successfully, attempting to send', {
               channelId: channel.id,
