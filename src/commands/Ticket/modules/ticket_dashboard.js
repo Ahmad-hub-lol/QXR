@@ -30,6 +30,13 @@ import {
 } from '../../../utils/panelStatus.js';
 import { startDashboardSession } from '../../../utils/dashboardSession.js';
 
+const BUTTON_STYLES = [
+    { name: 'Primary', style: ButtonStyle.Primary, color: 'blue' },
+    { name: 'Secondary', style: ButtonStyle.Secondary, color: 'gray' },
+    { name: 'Success', style: ButtonStyle.Success, color: 'green' },
+    { name: 'Danger', style: ButtonStyle.Danger, color: 'red' },
+];
+
 function buildButtonRow(guildConfig, guildId, disabled = false, panelStatus = null) {
     const dmEnabled = guildConfig.dmOnClose !== false;
     const showRepost = panelStatus?.exists === false && panelStatus?.reason === 'panel_deleted';
@@ -61,6 +68,12 @@ function buildButtonRow(guildConfig, guildId, disabled = false, panelStatus = nu
             .setEmoji('🛡️')
             .setDisabled(disabled),
         new ButtonBuilder()
+            .setCustomId(`ticket_cfg_button_color_${guildId}`)
+            .setLabel('Button Color')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('🎨')
+            .setDisabled(disabled),
+        new ButtonBuilder()
             .setCustomId(`ticket_cfg_delete_${guildId}`)
             .setLabel('Delete System')
             .setStyle(ButtonStyle.Danger)
@@ -82,18 +95,26 @@ async function persistPanelMessageId(client, guildId, guildConfig, messageId) {
 function buildPanelEmbed(config) {
     return new EmbedBuilder()
         .setTitle('Support Tickets')
-        .setDescription(config.ticketPanelMessage || 'Click the button below to create a support ticket.')
+        .setDescription(config.ticketPanelMessage || 'Click a button below to create a support ticket.')
         .setColor(getColor('info'));
 }
 
 function buildPanelButtonRow(config) {
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('create_ticket')
-            .setLabel(config.ticketButtonLabel || 'Create Ticket')
-            .setStyle(ButtonStyle.Primary)
-            .setEmoji('📩'),
-    );
+    const buttonCount = config.ticketPanelButtonCount || 1;
+    const buttonColor = config.ticketButtonColor || ButtonStyle.Primary;
+    const buttons = [];
+
+    for (let i = 1; i <= buttonCount; i++) {
+        buttons.push(
+            new ButtonBuilder()
+                .setCustomId(`create_ticket_${i}`)
+                .setLabel(config.ticketButtonLabel || 'Create Ticket')
+                .setStyle(buttonColor)
+                .setEmoji('📩'),
+        );
+    }
+
+    return new ActionRowBuilder().addComponents(buttons);
 }
 
 async function repostTicketPanel(client, guild, guildConfig, guildId) {
@@ -138,6 +159,8 @@ function buildDashboardEmbed(config, guild, panelStatus = null, ticketStats = nu
     const rawMsg = config.ticketPanelMessage || 'Click the button below to create a support ticket.';
     const panelMsg = `\`${rawMsg.length > 60 ? rawMsg.substring(0, 60) + '…' : rawMsg}\``;
     const btnLabel = `\`${config.ticketButtonLabel || 'Create Ticket'}\``;
+    const buttonCount = config.ticketPanelButtonCount || 1;
+    const buttonColorName = BUTTON_STYLES.find(s => s.style === (config.ticketButtonColor || ButtonStyle.Primary))?.name || 'Primary';
 
     let panelStatusValue = formatPanelStatusField(panelStatus);
 
@@ -161,8 +184,11 @@ function buildDashboardEmbed(config, guild, panelStatus = null, ticketStats = nu
             { name: '\u200B', value: '\u200B', inline: true },
             { name: 'Panel Message', value: panelMsg, inline: false },
             { name: 'Button Label', value: btnLabel, inline: true },
+            { name: 'Button Count', value: String(buttonCount), inline: true },
+            { name: 'Button Color', value: buttonColorName, inline: true },
             { name: 'Max Tickets/User', value: String(config.maxTicketsPerUser || 3), inline: true },
             { name: 'DM on Close', value: config.dmOnClose !== false ? 'Enabled' : 'Disabled', inline: true },
+            { name: '\u200B', value: '\u200B', inline: true },
             { name: 'Ticket Logs Channel', value: ticketLogsChannel, inline: true },
             { name: 'Transcript Channel', value: transcriptChannel, inline: true },
             { name: '\u200B', value: '\u200B', inline: true },
@@ -211,7 +237,7 @@ function buildSelectMenu(guildId) {
                 .setEmoji('🎫'),
             new StringSelectMenuOptionBuilder()
                 .setLabel('Set Transcript Channel')
-                .setDescription('Channel to receive auto-generated transcripts on deletion')
+                .setDescription('Channel to receive ticket transcripts on deletion')
                 .setValue('transcript_channel')
                 .setEmoji('📜'),
         );
@@ -289,6 +315,7 @@ export default {
                     customId === `ticket_cfg_repost_${guildId}` ||
                     customId === `ticket_cfg_dm_toggle_${guildId}` ||
                     customId === `ticket_cfg_staff_role_btn_${guildId}` ||
+                    customId === `ticket_cfg_button_color_${guildId}` ||
                     customId === `ticket_cfg_delete_${guildId}`,
                 onSelect: async (selectInteraction) => {
                     const selectedOption = selectInteraction.values[0];
@@ -326,6 +353,8 @@ export default {
                         await handleDmOnClose(btnInteraction, interaction, guildConfig, guildId, client);
                     } else if (btnInteraction.customId === `ticket_cfg_staff_role_btn_${guildId}`) {
                         await handleStaffRole(btnInteraction, interaction, guildConfig, guildId, client);
+                    } else if (btnInteraction.customId === `ticket_cfg_button_color_${guildId}`) {
+                        await handleButtonColor(btnInteraction, interaction, guildConfig, guildId, client);
                     } else if (btnInteraction.customId === `ticket_cfg_delete_${guildId}`) {
                         await handleDeleteSystem(btnInteraction, interaction, guildConfig, guildId, client);
                     }
@@ -450,6 +479,93 @@ async function handleButtonLabel(selectInteraction, rootInteraction, guildConfig
     });
 
     await refreshDashboard(rootInteraction, guildConfig, guildId, client);
+}
+
+async function handleButtonColor(selectInteraction, rootInteraction, guildConfig, guildId, client) {
+    await selectInteraction.deferUpdate();
+
+    const colorSelectMenu = new StringSelectMenuBuilder()
+        .setCustomId('ticket_cfg_btn_color_select')
+        .setPlaceholder('Choose a button color...')
+        .addOptions(
+            new StringSelectMenuOptionBuilder()
+                .setLabel('Primary (Blue)')
+                .setDescription('Discord blue color')
+                .setValue(String(ButtonStyle.Primary))
+                .setEmoji('🔵'),
+            new StringSelectMenuOptionBuilder()
+                .setLabel('Secondary (Gray)')
+                .setDescription('Discord gray color')
+                .setValue(String(ButtonStyle.Secondary))
+                .setEmoji('⚫'),
+            new StringSelectMenuOptionBuilder()
+                .setLabel('Success (Green)')
+                .setDescription('Discord green color')
+                .setValue(String(ButtonStyle.Success))
+                .setEmoji('🟢'),
+            new StringSelectMenuOptionBuilder()
+                .setLabel('Danger (Red)')
+                .setDescription('Discord red color')
+                .setValue(String(ButtonStyle.Danger))
+                .setEmoji('🔴'),
+        );
+
+    const row = new ActionRowBuilder().addComponents(colorSelectMenu);
+
+    await selectInteraction.followUp({
+        embeds: [
+            new EmbedBuilder()
+                .setTitle('🎨 Choose Button Color')
+                .setDescription('Select the color for the ticket creation buttons on the panel.')
+                .setColor(getColor('info')),
+        ],
+        components: [row],
+        flags: MessageFlags.Ephemeral,
+    });
+
+    const collector = rootInteraction.channel.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        filter: i =>
+            i.user.id === selectInteraction.user.id && i.customId === 'ticket_cfg_btn_color_select',
+        time: 60_000,
+        max: 1,
+    });
+
+    collector.on('collect', async colorInteraction => {
+        await colorInteraction.deferUpdate();
+        const selectedColor = parseInt(colorInteraction.values[0], 10);
+
+        guildConfig.ticketButtonColor = selectedColor;
+        await setGuildConfig(client, guildId, guildConfig);
+
+        const colorName = BUTTON_STYLES.find(s => s.style === selectedColor)?.name || 'Primary';
+        const panelUpdated = await updateLivePanel(client, rootInteraction.guild, guildConfig, guildId);
+
+        await colorInteraction.followUp({
+            embeds: [
+                successEmbed(
+                    '✅ Button Color Updated',
+                    `Button color changed to **${colorName}**.${
+                        panelUpdated
+                            ? '\nThe live ticket panel buttons have also been updated.'
+                            : '\n> **Note:** The live panel could not be located. Use **Repost Panel** on the dashboard to restore it.'
+                    }`,
+                ),
+            ],
+            flags: MessageFlags.Ephemeral,
+        });
+
+        await refreshDashboard(rootInteraction, guildConfig, guildId, client);
+    });
+
+    collector.on('end', (collected, reason) => {
+        if (reason === 'time' && collected.size === 0) {
+            replyUserError(selectInteraction, {
+                type: ErrorTypes.RATE_LIMIT,
+                message: 'No color was selected. The button color was not changed.',
+            }).catch(() => {});
+        }
+    });
 }
 
 async function handleStaffRole(selectInteraction, rootInteraction, guildConfig, guildId, client) {
@@ -770,7 +886,7 @@ async function handleTranscriptChannel(selectInteraction, rootInteraction, guild
         embeds: [
             new EmbedBuilder()
                 .setTitle('📜 Select Transcript Channel')
-                .setDescription('Choose where auto-generated transcripts will be sent when tickets are deleted.')
+                .setDescription('Choose where ticket transcripts will be sent when tickets are deleted.')
                 .setColor(getColor('info'))
         ],
         components: [new ActionRowBuilder().addComponents(channelSelect)],
@@ -804,71 +920,6 @@ async function handleTranscriptChannel(selectInteraction, rootInteraction, guild
             replyUserError(selectInteraction, {
                 type: ErrorTypes.RATE_LIMIT,
                 message: 'No channel selected. No changes were made.',
-            }).catch(() => {});
-        }
-    });
-}
-
-async function handleCheckUser(selectInteraction, rootInteraction, guildConfig, guildId, client) {
-    await selectInteraction.deferUpdate();
-
-    const userSelect = new UserSelectMenuBuilder()
-        .setCustomId('ticket_cfg_check_user')
-        .setPlaceholder('Select a user to check...')
-        .setMaxValues(1);
-
-    const row = new ActionRowBuilder().addComponents(userSelect);
-
-    await selectInteraction.followUp({
-        embeds: [
-            new EmbedBuilder()
-                .setTitle('Check User Tickets')
-                .setDescription('Select a user to view their current open ticket count.')
-                .setColor(getColor('info')),
-        ],
-        components: [row],
-        flags: MessageFlags.Ephemeral,
-    });
-
-    const userCollector = rootInteraction.channel.createMessageComponentCollector({
-        componentType: ComponentType.UserSelect,
-        filter: i =>
-            i.user.id === selectInteraction.user.id && i.customId === 'ticket_cfg_check_user',
-        time: 60_000,
-        max: 1,
-    });
-
-    userCollector.on('collect', async userInteraction => {
-        await userInteraction.deferUpdate();
-        const targetUser = userInteraction.users.first();
-        const maxTickets = guildConfig.maxTicketsPerUser || 3;
-        const openCount = await getUserTicketCount(guildId, targetUser.id);
-        const atLimit = openCount >= maxTickets;
-
-        await userInteraction.followUp({
-            embeds: [
-                new EmbedBuilder()
-                    .setTitle(`Ticket Check — ${targetUser.username}`)
-                    .setDescription(
-                        `**Open Tickets:** ${openCount} / ${maxTickets}\n` +
-                            `**Remaining:** ${Math.max(0, maxTickets - openCount)}\n\n` +
-                            (atLimit
-                                ? '⚠️ This user has reached their ticket limit.'
-                                : '✅ This user can still open more tickets.'),
-                    )
-                    .setColor(atLimit ? getColor('error') : getColor('success'))
-                    .setThumbnail(targetUser.displayAvatarURL({ size: 64 }))
-                    .setTimestamp(),
-            ],
-            flags: MessageFlags.Ephemeral,
-        });
-    });
-
-    userCollector.on('end', (collected, reason) => {
-        if (reason === 'time' && collected.size === 0) {
-            replyUserError(selectInteraction, {
-                type: ErrorTypes.RATE_LIMIT,
-                message: 'No user was selected.',
             }).catch(() => {});
         }
     });
@@ -953,6 +1004,8 @@ async function handleDeleteSystem(btnInteraction, rootInteraction, guildConfig, 
         'ticketClosedCategoryId',
         'ticketPanelMessage',
         'ticketButtonLabel',
+        'ticketPanelButtonCount',
+        'ticketButtonColor',
         'maxTicketsPerUser',
         'dmOnClose',
     ];
@@ -965,7 +1018,6 @@ async function handleDeleteSystem(btnInteraction, rootInteraction, guildConfig, 
                     const panelMessage = await panelChannel.messages.fetch(guildConfig.ticketPanelMessageId).catch(() => null);
                     if (panelMessage) await panelMessage.delete().catch(() => {});
                 } else {
-                    
                     const messages = await panelChannel.messages.fetch({ limit: 50 }).catch(() => null);
                     if (messages) {
                         const found = messages.find(
