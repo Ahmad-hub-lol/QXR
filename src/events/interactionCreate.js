@@ -241,7 +241,6 @@ export default {
             });
             if (!permissionAllowed) return;
 
-            // HERE IS THE FIX: This executes your slash commands correctly!
             await command.execute(interaction, guildConfig, client);
 
           } catch (error) {
@@ -310,7 +309,8 @@ export default {
               const choices = await Promise.all(validPanels.slice(0, 25).map(async panel => {
                 const channel = guild.channels.cache.get(panel.channelId);
                 const msg = await channel.messages.fetch(panel.messageId).catch(() => null);
-                return { name: `${msg?.embeds?.[0]?.title ?? 'Untitled Panel'} (${channel?.name ?? 'unknown'})`.substring(0, 100), value: panel.messageId };
+                const title = msg?.embeds?.[0]?.title ?? 'Untitled Panel';
+                return { name: `${title} (${channel?.name ?? 'unknown'})`.substring(0, 100), value: panel.messageId };
               }));
               await interaction.respond(choices.filter(c => c !== null));
             } catch (error) {
