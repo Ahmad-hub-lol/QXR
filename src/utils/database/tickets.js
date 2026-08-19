@@ -1,3 +1,5 @@
+// src/services/tickets/ticketData.js — PART 1 OF 2
+
 import { logger } from '../logger.js';
 import { db, getFromDb } from './wrapper.js';
 import { getTicketCounterKey, getTicketKey } from './keys.js';
@@ -11,6 +13,41 @@ export async function getTicketData(guildId, channelId) {
 
     const key = getTicketKey(guildId, channelId);
     return await db.get(key);
+}
+
+/**
+ * Saves or updates the live operational priority value of a ticket in memory or Postgres JSON maps.
+ * @param {string} guildId Target server unique snowflake string
+ * @param {string} channelId Target ticket tracking text channel snowflake
+ * @param {string} priority Tier level identification string (low, medium, high, urgent)
+ */
+export async function saveTicketPriority(guildId, channelId, priority) {
+    try {
+        if (!db.initialized) {
+            await db.initialize();
+        }
+
+        const currentData = await getTicketData(guildId, channelId) || {};
+        currentData.priority = priority;
+        currentData.priorityUpdatedAt = new Date().toISOString();
+
+        // 1. Sync data straight to Key-Value memory layer
+        await saveTicketData(guildId, channelId, currentData);
+
+        // 2. Sync to active PostgreSQL persistence clusters if pool infrastructure is enabled
+        if (db.db?.pool && typeof db.db.isAvailable === 'function' && db.db.isAvailable()) {
+            const { pgConfig } = await import('../../config/database/postgres.js');
+            
+            await db.db.pool.query(
+                `UPDATE ${pgConfig.tables.tickets}
+                 SET data = jsonb_set(data, '{priority}', $1::jsonb)
+                 WHERE guild_id = $2 AND channel_id = $3`,
+                [JSON.stringify(priority), guildId, channelId]
+            ).catch(err => logger.error(`Postgres Priority write error for channel ${channelId}:`, err));
+        }
+    } catch (error) {
+        logger.error(`Error saving priority level tier for channel ${channelId}:`, error);
+    }
 }
 
 export async function getOpenTicketCountForUser(guildId, userId) {
@@ -95,6 +132,7 @@ export async function incrementTicketCounter(guildId) {
 
     return nextCounter.toString().padStart(3, '0');
 }
+// src/services/tickets/ticketData.js — PART 2 OF 2
 
 async function listGuildTickets(guildId) {
     if (!db.initialized) {
@@ -171,6 +209,11 @@ export async function getGuildTicketStats(guildId) {
             closedCount: 0,
             avgCloseTimeMs: null,
             feedbackCount: 0,
+            avgRating: null,
+        };
+    }
+}
+
             avgRating: null,
         };
     }
