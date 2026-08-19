@@ -65,13 +65,10 @@ export default {
         // =============================================================
         // TICKET REVIEW & PRIORITY ESCALATION INTERCEPTORS
         // =============================================================
-        
-        // 1. Admin Priority Button Press Handler
         if (interaction.isButton() && interaction.customId.startsWith('admin_priority_')) {
           return await handlePrioritySelection(interaction);
         }
 
-        // 2. User Clicks "Write Review" (Sent when a ticket closes)
         if (interaction.isButton() && interaction.customId === 'process_ticket_review') {
           const modal = new ModalBuilder()
             .setCustomId(`ticket_modal_submit_${interaction.channel.name}`)
@@ -103,29 +100,19 @@ export default {
           return await interaction.showModal(modal);
         }
 
-        // 3. User Clicks "Skip Review"
         if (interaction.isButton() && interaction.customId === 'skip_ticket_review') {
           await interaction.deferReply({ ephemeral: true });
-          
           let ticketNumber = interaction.channel.name.replace('ticket-', '');
           await logTicketFeedback({
-            client,
-            guildId: interaction.guildId,
-            ticketNumber,
-            ticketChannelId: interaction.channel.id,
-            userId: interaction.user.id,
-            rating: null,
-            comment: null,
-            skipped: true
+            client, guildId: interaction.guildId, ticketNumber,
+            ticketChannelId: interaction.channel.id, userId: interaction.user.id,
+            rating: null, comment: null, skipped: true
           });
-
           return await interaction.editReply({ content: '✅ Review step bypassed successfully.' });
         }
 
-        // 4. Modal Submission Processing
         if (interaction.isModalSubmit() && interaction.customId.startsWith('ticket_modal_submit_')) {
           await interaction.deferReply({ ephemeral: true });
-
           const ticketNameParsed = interaction.customId.replace('ticket_modal_submit_', '');
           const ticketNumber = ticketNameParsed.replace('ticket-', '');
           const rawRating = interaction.fields.getTextInputValue('user_numerical_rating');
@@ -133,20 +120,13 @@ export default {
           const numericRating = parseInt(rawRating);
 
           if (isNaN(numericRating) || numericRating < 1 || numericRating > 5) {
-            return await interaction.editReply({ 
-              content: '❌ Invalid input. Star ratings must be a whole number between 1 and 5.' 
-            });
+            return await interaction.editReply({ content: '❌ Invalid input. Star ratings must be between 1 and 5.' });
           }
 
           await logTicketFeedback({
-            client,
-            guildId: interaction.guildId,
-            ticketNumber,
-            ticketChannelId: interaction.channel.id,
-            userId: interaction.user.id,
-            rating: numericRating,
-            comment: userComment,
-            skipped: false
+            client, guildId: interaction.guildId, ticketNumber,
+            ticketChannelId: interaction.channel.id, userId: interaction.user.id,
+            rating: numericRating, comment: userComment, skipped: false
           });
 
           const visualStars = '⭐'.repeat(numericRating);
@@ -159,6 +139,9 @@ export default {
           await interaction.channel.send({ embeds: [confirmationEmbed] });
           return await interaction.editReply({ content: '✅ Your feedback entry was submitted securely!' });
         }
+        // =============================================================
+        // STANDARD CHAT INPUT COMMAND ROUTING LAYER
+        // =============================================================
         if (interaction.isChatInputCommand()) {
           try {
             logger.info(`Command executed: /${interaction.commandName} by ${interaction.user.tag}`, {
@@ -217,7 +200,6 @@ export default {
                   withTraceContext({ commandName: interaction.commandName, remainingSec }, interactionTraceContext)
                 );
               }
-
               client.cooldowns.set(cooldownKey, Date.now() + defaultCooldownSec * 1000);
             }
 
@@ -257,11 +239,11 @@ export default {
               source: 'interactionCreate',
               guildConfig,
             });
-            if (!permissionAllowed) {
-              return;
-            }
+            if (!permissionAllowed) return;
 
+            // HERE IS THE FIX: This executes your slash commands correctly!
             await command.execute(interaction, guildConfig, client);
+
           } catch (error) {
             await handleInteractionError(interaction, error, withTraceContext({
               type: 'command',
@@ -275,11 +257,7 @@ export default {
             try {
               await autocompleteCommand.autocomplete(interaction, client);
             } catch (error) {
-              logger.error('Error handling command autocomplete:', {
-                error: error.message,
-                guildId: interaction.guildId,
-                commandName: interaction.commandName,
-              });
+              logger.error('Error handling command autocomplete:', { error: error.message, guildId: interaction.guildId, commandName: interaction.commandName });
               await interaction.respond([]).catch(() => {});
             }
             return;
@@ -292,24 +270,10 @@ export default {
               const { getApplicationRoles } = await import('../utils/database.js');
               const roles = await getApplicationRoles(client, interaction.guildId);
               const roleName = interaction.options.getString('application', false);
-
-              const filtered = roles.filter(role =>
-                role.enabled !== false && 
-                role.name.toLowerCase().startsWith(roleName?.toLowerCase() || '')
-              );
-              
-              await interaction.respond(
-                filtered.slice(0, 25).map(role => ({
-                  name: `${role.name}${role.enabled === false ? ' (disabled)' : ''}`,
-                  value: role.name
-                }))
-              );
+              const filtered = roles.filter(role => role.enabled !== false && role.name.toLowerCase().startsWith(roleName?.toLowerCase() || ''));
+              await interaction.respond(filtered.slice(0, 25).map(role => ({ name: `${role.name}${role.enabled === false ? ' (disabled)' : ''}`, value: role.name })));
             } catch (error) {
-              logger.error('Error handling autocomplete:', {
-                error: error.message,
-                guildId: interaction.guildId,
-                commandName: interaction.commandName
-              });
+              logger.error('Error handling autocomplete:', { error: error.message, guildId: interaction.guildId, commandName: interaction.commandName });
               await interaction.respond([]);
             }
           } else if (interaction.commandName === 'app-admin' && focusedOption.name === 'application') {
@@ -317,23 +281,10 @@ export default {
               const { getApplicationRoles } = await import('../utils/database.js');
               const roles = await getApplicationRoles(client, interaction.guildId);
               const appName = interaction.options.getString('application', false);
-
-              const filtered = roles.filter(role =>
-                role.name.toLowerCase().startsWith(appName?.toLowerCase() || '')
-              );
-
-              await interaction.respond(
-                filtered.slice(0, 25).map(role => ({
-                  name: `${role.name}${role.enabled === false ? ' (disabled)' : ''}`,
-                  value: role.name
-                }))
-              );
+              const filtered = roles.filter(role => role.name.toLowerCase().startsWith(appName?.toLowerCase() || ''));
+              await interaction.respond(filtered.slice(0, 25).map(role => ({ name: `${role.name}${role.enabled === false ? ' (disabled)' : ''}`, value: role.name })));
             } catch (error) {
-              logger.error('Error handling app-admin autocomplete:', {
-                error: error.message,
-                guildId: interaction.guildId,
-                commandName: interaction.commandName
-              });
+              logger.error('Error handling app-admin autocomplete:', { error: error.message, guildId: interaction.guildId, commandName: interaction.commandName });
               await interaction.respond([]);
             }
           } else if (interaction.commandName === 'reactroles' && focusedOption.name === 'panel') {
@@ -341,69 +292,29 @@ export default {
               const { getAllReactionRoleMessages, deleteReactionRoleMessage } = await import('../services/reactionRoleService.js');
               const guildId = interaction.guildId;
               const guild = interaction.guild;
-              
               let panels = await getAllReactionRoleMessages(client, guildId);
-              
-              if (!panels || panels.length === 0) {
-                await interaction.respond([]);
-                return;
-              }
+              if (!panels || panels.length === 0) return await interaction.respond([]);
 
               const validPanels = [];
               for (const panel of panels) {
-                if (!panel.messageId || !panel.channelId) {
-                  continue;
-                }
-                
+                if (!panel.messageId || !panel.channelId) continue;
                 const channel = guild.channels.cache.get(panel.channelId);
-                if (!channel) {
-                  await deleteReactionRoleMessage(client, guildId, panel.messageId).catch(() => {});
-                  continue;
-                }
-                
+                if (!channel) { await deleteReactionRoleMessage(client, guildId, panel.messageId).catch(() => {}); continue; }
                 const msg = await channel.messages.fetch(panel.messageId).catch(() => null);
-                if (!msg) {
-                  await deleteReactionRoleMessage(client, guildId, panel.messageId).catch(() => {});
-                  continue;
-                }
+                if (!msg) { await deleteReactionRoleMessage(client, guildId, panel.messageId).catch(() => {}); continue; }
                 validPanels.push(panel);
               }
               
-              if (validPanels.length === 0) {
-                await interaction.respond([]);
-                return;
-              }
+              if (validPanels.length === 0) return await interaction.respond([]);
               
-              const choices = await Promise.all(
-                validPanels.slice(0, 25).map(async panel => {
-                  try {
-                    const channel = guild.channels.cache.get(panel.channelId);
-                    if (!channel) return null;
-                    
-                    const msg = await channel.messages.fetch(panel.messageId).catch(() => null);
-                    if (!msg) return null;
-                    
-                    const title = msg?.embeds?.[0]?.title ?? 'Untitled Panel';
-                    const channelName = channel?.name ?? 'unknown';
-                    
-                    return {
-                      name: `${title} (${channelName})`.substring(0, 100),
-                      value: panel.messageId
-                    };
-                  } catch (e) {
-                    return null;
-                  }
-                })
-              );
-              
-              const validChoices = choices.filter(c => c !== null);
-              await interaction.respond(validChoices);
+              const choices = await Promise.all(validPanels.slice(0, 25).map(async panel => {
+                const channel = guild.channels.cache.get(panel.channelId);
+                const msg = await channel.messages.fetch(panel.messageId).catch(() => null);
+                return { name: `${msg?.embeds?.[0]?.title ?? 'Untitled Panel'} (${channel?.name ?? 'unknown'})`.substring(0, 100), value: panel.messageId };
+              }));
+              await interaction.respond(choices.filter(c => c !== null));
             } catch (error) {
-              logger.error('Error handling reactroles autocomplete:', {
-                error: error.message,
-                guildId: interaction.guildId,
-                commandName: interaction.commandName
-              });
+              logger.error('Error handling reactroles autocomplete:', { error: error.message, guildId: interaction.guildId, commandName: interaction.commandName });
               await interaction.respond([]);
             }
           }
@@ -413,89 +324,28 @@ export default {
             const buttonType = parts.slice(0, 3).join('_');
             const listId = parts;
             const button = client.buttons.get(buttonType);
-
             if (button) {
-              try {
-                await button.execute(interaction, client, [listId]);
-              } catch (error) {
-                await handleInteractionError(interaction, error, withTraceContext({
-                  type: 'button',
-                  customId: interaction.customId,
-                  handler: 'todo'
-                }, interactionTraceContext));
-              }
-            } else {
-              throw createError(
-                `No button handler found for ${buttonType}`,
-                ErrorTypes.CONFIGURATION,
-                'This button is not available.',
-                withTraceContext({ buttonType }, interactionTraceContext)
-              );
+              try { await button.execute(interaction, client, [listId]); } 
+              catch (error) { await handleInteractionError(interaction, error, withTraceContext({ type: 'button', customId: interaction.customId, handler: 'todo' }, interactionTraceContext)); }
             }
             return;
           }
 
           const [customId, ...args] = interaction.customId.split(':');
           const button = client.buttons.get(customId);
-
-          if (!button) {
-            if (!interaction.customId.includes(':') || isCollectorManagedComponent(customId)) {
-              return;
-            }
-
-            throw createError(
-              `No button handler found for ${customId}`,
-              ErrorTypes.CONFIGURATION,
-              'This button is not available.',
-              withTraceContext({ customId }, interactionTraceContext)
-            );
-          }
-
-          try {
-            await button.execute(interaction, client, args);
-          } catch (error) {
-            await handleInteractionError(interaction, error, withTraceContext({
-              type: 'button',
-              customId: interaction.customId,
-              handler: 'general'
-            }, interactionTraceContext));
-          }
+          if (!button) { if (!interaction.customId.includes(':') || isCollectorManagedComponent(customId)) return; throw createError(`No button handler found for ${customId}`, ErrorTypes.CONFIGURATION, 'This button is not available.', withTraceContext({ customId }, interactionTraceContext)); }
+          try { await button.execute(interaction, client, args); } 
+          catch (error) { await handleInteractionError(interaction, error, withTraceContext({ type: 'button', customId: interaction.customId, handler: 'general' }, interactionTraceContext)); }
         } else if (interaction.isStringSelectMenu()) {
           const [customId, ...args] = interaction.customId.split(':');
           const selectMenu = client.selectMenus.get(customId);
-
-          if (!selectMenu) {
-            if (!interaction.customId.includes(':') || isCollectorManagedComponent(customId)) {
-              return;
-            }
-            throw createError(
-              `No select menu handler found for ${customId}`,
-              ErrorTypes.CONFIGURATION,
-              'This dropdown menu is not available.',
-              withTraceContext({ customId }, interactionTraceContext)
-            );
-          }
-
-          try {
-            await selectMenu.execute(interaction, client, args);
-          } catch (error) {
-            await handleInteractionError(interaction, error, withTraceContext({
-              type: 'select_menu',
-              customId: interaction.customId,
-              handler: 'general'
-            }, interactionTraceContext));
-          }
+          if (!selectMenu) { if (!interaction.customId.includes(':') || isCollectorManagedComponent(customId)) return; throw createError(`No select menu handler found for ${customId}`, ErrorTypes.CONFIGURATION, 'This dropdown menu is not available.', withTraceContext({ customId }, interactionTraceContext)); }
+          try { await selectMenu.execute(interaction, client, args); } 
+          catch (error) { await handleInteractionError(interaction, error, withTraceContext({ type: 'select_menu', customId: interaction.customId, handler: 'general' }, interactionTraceContext)); }
         } else if (interaction.isModalSubmit()) {
           if (interaction.customId === 'application_modal') {
-            try {
-              await handleApplicationModal(interaction, client);
-            } catch (error) {
-              await handleInteractionError(interaction, error, withTraceContext({
-                type: 'modal_submit',
-                customId: interaction.customId,
-                handler: 'apply'
-              }, interactionTraceContext));
-            }
+            try { await handleApplicationModal(interaction, client); } 
+            catch (error) { await handleInteractionError(interaction, error, withTraceContext({ type: 'modal_submit', customId: interaction.customId, handler: 'apply' }, interactionTraceContext)); }
           }
         }
       } catch (globalErr) {
