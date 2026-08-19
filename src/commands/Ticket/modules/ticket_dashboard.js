@@ -68,6 +68,12 @@ function buildButtonRow(guildConfig, guildId, disabled = false, panelStatus = nu
             .setEmoji('🛡️')
             .setDisabled(disabled),
         new ButtonBuilder()
+            .setCustomId(`ticket_cfg_review_role_btn_${guildId}`)
+            .setLabel('Review Role')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('👁️')
+            .setDisabled(disabled),
+        new ButtonBuilder()
             .setCustomId(`ticket_cfg_button_color_${guildId}`)
             .setLabel('Button Color')
             .setStyle(ButtonStyle.Primary)
@@ -147,6 +153,7 @@ function formatCloseDuration(ms) {
 function buildDashboardEmbed(config, guild, panelStatus = null, ticketStats = null) {
     const panelChannel = config.ticketPanelChannelId ? `<#${config.ticketPanelChannelId}>` : '`Not set`';
     const staffRole = config.ticketStaffRoleId ? `<@&${config.ticketStaffRoleId}>` : '`Not set`';
+    const reviewRole = config.ticketReviewRoleId ? `<@&${config.ticketReviewRoleId}>` : '`Not set`';
     const ticketLogsChannel = config.ticketLogsChannelId ? `<#${config.ticketLogsChannelId}>` : '`Not set`';
     const transcriptChannel = config.ticketTranscriptChannelId ? `<#${config.ticketTranscriptChannelId}>` : '`Not set`';
 
@@ -178,7 +185,7 @@ function buildDashboardEmbed(config, guild, panelStatus = null, ticketStats = nu
             { name: 'Panel Status', value: panelStatusValue, inline: false },
             { name: 'Panel Channel', value: panelChannel, inline: true },
             { name: 'Staff Role', value: staffRole, inline: true },
-            { name: '\u200B', value: '\u200B', inline: true },
+            { name: 'Review Role', value: reviewRole, inline: true },
             { name: 'Open Tickets Category', value: openCategory, inline: true },
             { name: 'Closed Tickets Category', value: closedCategory, inline: true },
             { name: '\u200B', value: '\u200B', inline: true },
@@ -315,6 +322,7 @@ export default {
                     customId === `ticket_cfg_repost_${guildId}` ||
                     customId === `ticket_cfg_dm_toggle_${guildId}` ||
                     customId === `ticket_cfg_staff_role_btn_${guildId}` ||
+                    customId === `ticket_cfg_review_role_btn_${guildId}` ||
                     customId === `ticket_cfg_button_color_${guildId}` ||
                     customId === `ticket_cfg_delete_${guildId}`,
                 onSelect: async (selectInteraction) => {
@@ -353,6 +361,8 @@ export default {
                         await handleDmOnClose(btnInteraction, interaction, guildConfig, guildId, client);
                     } else if (btnInteraction.customId === `ticket_cfg_staff_role_btn_${guildId}`) {
                         await handleStaffRole(btnInteraction, interaction, guildConfig, guildId, client);
+                    } else if (btnInteraction.customId === `ticket_cfg_review_role_btn_${guildId}`) {
+                        await handleReviewRole(btnInteraction, interaction, guildConfig, guildId, client);
                     } else if (btnInteraction.customId === `ticket_cfg_button_color_${guildId}`) {
                         await handleButtonColor(btnInteraction, interaction, guildConfig, guildId, client);
                     } else if (btnInteraction.customId === `ticket_cfg_delete_${guildId}`) {
@@ -619,6 +629,62 @@ async function handleStaffRole(selectInteraction, rootInteraction, guildConfig, 
             replyUserError(selectInteraction, {
                 type: ErrorTypes.RATE_LIMIT,
                 message: 'No role was selected. The staff role was not changed.',
+            }).catch(() => {});
+        }
+    });
+}
+
+async function handleReviewRole(selectInteraction, rootInteraction, guildConfig, guildId, client) {
+    await selectInteraction.deferUpdate();
+
+    const roleSelect = new RoleSelectMenuBuilder()
+        .setCustomId('ticket_cfg_review_role')
+        .setPlaceholder('Select the review role...')
+        .setMaxValues(1);
+
+    const row = new ActionRowBuilder().addComponents(roleSelect);
+
+    await selectInteraction.followUp({
+        embeds: [
+            new EmbedBuilder()
+                .setTitle('👁️ Change Review Viewer Role')
+                .setDescription(
+                    `**Current:** ${guildConfig.ticketReviewRoleId ? `<@&${guildConfig.ticketReviewRoleId}>` : '`Not set`'}\n\nSelect the role that should have access to view ticket reviews. Leave unset to allow all staff members.`,
+                )
+                .setColor(getColor('info')),
+        ],
+        components: [row],
+        flags: MessageFlags.Ephemeral,
+    });
+
+    const roleCollector = rootInteraction.channel.createMessageComponentCollector({
+        componentType: ComponentType.RoleSelect,
+        filter: i =>
+            i.user.id === selectInteraction.user.id && i.customId === 'ticket_cfg_review_role',
+        time: 60_000,
+        max: 1,
+    });
+
+    roleCollector.on('collect', async roleInteraction => {
+        await roleInteraction.deferUpdate();
+        const role = roleInteraction.roles.first();
+
+        guildConfig.ticketReviewRoleId = role.id;
+        await setGuildConfig(client, guildId, guildConfig);
+
+        await roleInteraction.followUp({
+            embeds: [successEmbed('Review Role Updated', `Review viewers role set to ${role}.\n\nOnly members with this role can now view ticket reviews.`)],
+            flags: MessageFlags.Ephemeral,
+        });
+
+        await refreshDashboard(rootInteraction, guildConfig, guildId, client);
+    });
+
+    roleCollector.on('end', (collected, reason) => {
+        if (reason === 'time' && collected.size === 0) {
+            replyUserError(selectInteraction, {
+                type: ErrorTypes.RATE_LIMIT,
+                message: 'No role was selected. The review role was not changed.',
             }).catch(() => {});
         }
     });
@@ -1000,6 +1066,7 @@ async function handleDeleteSystem(btnInteraction, rootInteraction, guildConfig, 
         'ticketPanelChannelId',
         'ticketPanelMessageId',
         'ticketStaffRoleId',
+        'ticketReviewRoleId',
         'ticketCategoryId',
         'ticketClosedCategoryId',
         'ticketPanelMessage',
