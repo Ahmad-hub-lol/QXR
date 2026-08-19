@@ -1,4 +1,4 @@
-import { Events, MessageFlags } from 'discord.js';
+import { Events, MessageFlags, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 import {
@@ -19,6 +19,10 @@ import { resolveSlashAccessKey } from '../utils/messageAdapter.js';
 import { isCollectorManagedComponent } from '../utils/collectorComponents.js';
 import { ResponseCoordinator } from '../utils/responseCoordinator.js';
 import { enforceDefaultCommandPermissions } from '../utils/permissionGuard.js';
+
+// Import our new ticket review and priority handlers
+import { handlePrioritySelection } from '../utils/ticketPriority.js';
+import { logTicketFeedback } from '../utils/ticketLogging.js';
 
 const COMMAND_ERROR_SUBTYPES = {
   warn: 'warn_failed',
@@ -58,6 +62,103 @@ export default {
         InteractionHelper.patchInteractionResponses(interaction);
         ResponseCoordinator.attach(interaction);
 
+        // =============================================================
+        // TICKET REVIEW & PRIORITY ESCALATION INTERCEPTORS
+        // =============================================================
+        
+        // 1. Admin Priority Button Press Handler
+        if (interaction.isButton() && interaction.customId.startsWith('admin_priority_')) {
+          return await handlePrioritySelection(interaction);
+        }
+
+        // 2. User Clicks "Write Review" (Sent when a ticket closes)
+        if (interaction.isButton() && interaction.customId === 'process_ticket_review') {
+          const modal = new ModalBuilder()
+            .setCustomId(`ticket_modal_submit_${interaction.channel.name}`)
+            .setTitle('Rate Your Support Agent');
+
+          const scoreField = new TextInputBuilder()
+            .setCustomId('user_numerical_rating')
+            .setLabel('Numeric Star Rating (1 to 5)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('5')
+            .setMinLength(1)
+            .setMaxLength(1)
+            .setRequired(true);
+
+          const commentField = new TextInputBuilder()
+            .setCustomId('user_text_comment')
+            .setLabel('Comments / Detailed Feedback')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('Provide a description of your experience...')
+            .setMinLength(5)
+            .setMaxLength(500)
+            .setRequired(true);
+
+          modal.addComponents(
+            new ActionRowBuilder().addComponents(scoreField),
+            new ActionRowBuilder().addComponents(commentField)
+          );
+
+          return await interaction.showModal(modal);
+        }
+
+        // 3. User Clicks "Skip Review"
+        if (interaction.isButton() && interaction.customId === 'skip_ticket_review') {
+          await interaction.deferReply({ ephemeral: true });
+          
+          let ticketNumber = interaction.channel.name.replace('ticket-', '');
+          await logTicketFeedback({
+            client,
+            guildId: interaction.guildId,
+            ticketNumber,
+            ticketChannelId: interaction.channel.id,
+            userId: interaction.user.id,
+            rating: null,
+            comment: null,
+            skipped: true
+          });
+
+          return await interaction.editReply({ content: '✅ Review step bypassed successfully.' });
+        }
+
+        // 4. Modal Submission Processing
+        if (interaction.isModalSubmit() && interaction.customId.startsWith('ticket_modal_submit_')) {
+          await interaction.deferReply({ ephemeral: true });
+
+          const ticketNameParsed = interaction.customId.replace('ticket_modal_submit_', '');
+          const ticketNumber = ticketNameParsed.replace('ticket-', '');
+          const rawRating = interaction.fields.getTextInputValue('user_numerical_rating');
+          const userComment = interaction.fields.getTextInputValue('user_text_comment');
+          const numericRating = parseInt(rawRating);
+
+          if (isNaN(numericRating) || numericRating < 1 || numericRating > 5) {
+            return await interaction.editReply({ 
+              content: '❌ Invalid input. Star ratings must be a whole number between 1 and 5.' 
+            });
+          }
+
+          await logTicketFeedback({
+            client,
+            guildId: interaction.guildId,
+            ticketNumber,
+            ticketChannelId: interaction.channel.id,
+            userId: interaction.user.id,
+            rating: numericRating,
+            comment: userComment,
+            skipped: false
+          });
+
+          const visualStars = '⭐'.repeat(numericRating);
+          const confirmationEmbed = new EmbedBuilder()
+            .setColor('#2ECC71')
+            .setTitle(`📝 Feedback Logged for ${ticketNameParsed}`)
+            .setDescription(`**Rating Score:** ${visualStars} (${numericRating}/5)\n**User:** ${interaction.user}\n\n**Comment:**\n${userComment}`)
+            .setTimestamp();
+
+          await interaction.channel.send({ embeds: [confirmationEmbed] });
+          return await interaction.editReply({ content: '✅ Your feedback entry was submitted securely!' });
+        }
         if (interaction.isChatInputCommand()) {
           try {
             logger.info(`Command executed: /${interaction.commandName} by ${interaction.user.tag}`, {
@@ -220,7 +321,7 @@ export default {
               const filtered = roles.filter(role =>
                 role.name.toLowerCase().startsWith(appName?.toLowerCase() || '')
               );
-              
+
               await interaction.respond(
                 filtered.slice(0, 25).map(role => ({
                   name: `${role.name}${role.enabled === false ? ' (disabled)' : ''}`,
@@ -310,7 +411,7 @@ export default {
           if (interaction.customId.startsWith('shared_todo_')) {
             const parts = interaction.customId.split('_');
             const buttonType = parts.slice(0, 3).join('_');
-            const listId = parts[3];
+            const listId = parts;
             const button = client.buttons.get(buttonType);
 
             if (button) {
@@ -367,11 +468,10 @@ export default {
             if (!interaction.customId.includes(':') || isCollectorManagedComponent(customId)) {
               return;
             }
-
             throw createError(
               `No select menu handler found for ${customId}`,
               ErrorTypes.CONFIGURATION,
-              'This select menu is not available.',
+              'This dropdown menu is not available.',
               withTraceContext({ customId }, interactionTraceContext)
             );
           }
@@ -381,90 +481,25 @@ export default {
           } catch (error) {
             await handleInteractionError(interaction, error, withTraceContext({
               type: 'select_menu',
-              customId: interaction.customId
-            }, interactionTraceContext));
-          }
-        } else if (interaction.isModalSubmit()) {
-          if (interaction.customId.startsWith('app_modal_')) {
-            try {
-              await handleApplicationModal(interaction);
-            } catch (error) {
-              await handleInteractionError(interaction, error, withTraceContext({
-                type: 'modal',
-                customId: interaction.customId,
-                handler: 'application'
-              }, interactionTraceContext));
-            }
-            return;
-          }
-
-          if (
-            interaction.customId.startsWith('app_review_')
-            || interaction.customId.startsWith('jtc_')
-            || interaction.customId.startsWith('config_wizard_modal:')
-            || interaction.customId.startsWith('log_dash_channel_modal:')
-            || interaction.customId.startsWith('log_dash_filter_modal:')
-          ) {
-            logger.debug(`Skipping modal handler lookup for inline-awaited modal: ${interaction.customId}`, {
-              event: 'interaction.modal.inline_skipped',
-              traceId: interactionTraceContext.traceId
-            });
-            return;
-          }
-
-          const [customId, ...args] = interaction.customId.split(':');
-          const modal = client.modals.get(customId);
-
-          if (!modal) {
-            if (!interaction.customId.includes(':')) {
-
-              return;
-            }
-
-            throw createError(
-              `No modal handler found for ${customId}`,
-              ErrorTypes.CONFIGURATION,
-              'This form is not available.',
-              withTraceContext({ customId }, interactionTraceContext)
-            );
-          }
-
-          try {
-            await modal.execute(interaction, client, args);
-          } catch (error) {
-            await handleInteractionError(interaction, error, withTraceContext({
-              type: 'modal',
               customId: interaction.customId,
               handler: 'general'
             }, interactionTraceContext));
           }
+        } else if (interaction.isModalSubmit()) {
+          if (interaction.customId === 'application_modal') {
+            try {
+              await handleApplicationModal(interaction, client);
+            } catch (error) {
+              await handleInteractionError(interaction, error, withTraceContext({
+                type: 'modal_submit',
+                customId: interaction.customId,
+                handler: 'apply'
+              }, interactionTraceContext));
+            }
+          }
         }
-      } catch (error) {
-        logger.error('Unhandled error in interactionCreate:', {
-          event: 'interaction.unhandled_error',
-          errorCode: ErrorCodes.INTERACTION_UNHANDLED,
-          error,
-          traceId: interactionTraceContext.traceId,
-          interactionId: interaction.id,
-          guildId: interaction.guildId,
-          userId: interaction.user?.id
-        });
-
-        try {
-          await handleInteractionError(interaction, error, withTraceContext({
-            type: 'interaction',
-            commandName: interaction.commandName,
-            customId: interaction.customId,
-            source: 'interactionCreate.unhandled'
-          }, interactionTraceContext));
-        } catch (replyError) {
-          logger.error('Failed to send fallback error response:', {
-            event: 'interaction.error_response_failed',
-            errorCode: ErrorCodes.INTERACTION_RESPONSE_FAILED,
-            error: replyError,
-            traceId: interactionTraceContext.traceId
-          });
-        }
+      } catch (globalErr) {
+        logger.error('Global unhandled error inside interactionCreate lifecycle:', globalErr);
       }
     });
   }
